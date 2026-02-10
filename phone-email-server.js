@@ -13,8 +13,8 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Your Phone.Email Client Secret (ADD THIS IN RENDER ENVIRONMENT VARIABLES!)
-const CLIENT_SECRET = process.env.PHONE_EMAIL_SECRET || 'YOUR_CLIENT_SECRET_HERE';
+// Your Phone.Email API Key (THIS IS YOUR CLIENT SECRET)
+const CLIENT_SECRET = process.env.PHONE_EMAIL_SECRET || 'JcZm76wY9WGpFfh6y2r30y5YirJhFB5C';
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -22,44 +22,9 @@ app.get('/', (req, res) => {
         message: 'Phone.Email Verification Server',
         status: 'running',
         client_id: '17998164863198198517',
-        endpoints: {
-            verify: 'POST /verify',
-            health: 'GET /health',
-            test_mock: 'GET /test-mock'
-        }
+        endpoint: 'POST /verify'
     });
 });
-
-// Helper function to fetch JSON from Phone.Email
-function fetchPhoneEmailData(user_json_url) {
-    return new Promise((resolve, reject) => {
-        // Append client secret as per Phone.Email documentation
-        const urlWithSecret = `${user_json_url}?client_secret=${CLIENT_SECRET}`;
-        
-        console.log('Fetching from Phone.Email:', urlWithSecret);
-        
-        https.get(urlWithSecret, (response) => {
-            let data = '';
-            
-            response.on('data', (chunk) => {
-                data += chunk;
-            });
-            
-            response.on('end', () => {
-                try {
-                    const jsonData = JSON.parse(data);
-                    console.log('Phone.Email response received');
-                    resolve(jsonData);
-                } catch (error) {
-                    reject(new Error('Failed to parse JSON response'));
-                }
-            });
-            
-        }).on('error', (error) => {
-            reject(error);
-        });
-    });
-}
 
 // Phone.Email verification endpoint
 app.post('/verify', async (req, res) => {
@@ -74,71 +39,100 @@ app.post('/verify', async (req, res) => {
             });
         }
         
-        console.log('User JSON URL:', user_json_url);
+        console.log('URL from frontend:', user_json_url);
+        
+        // Append API Key (Client Secret) to the URL
+        const urlWithSecret = `${user_json_url}?client_secret=${CLIENT_SECRET}`;
+        console.log('Fetching from Phone.Email with secret...');
         
         // Fetch data from Phone.Email
-        const userData = await fetchPhoneEmailData(user_json_url);
-        
-        console.log('User data from Phone.Email:', userData);
-        
-        // Extract data (as per Phone.Email documentation)
-        const rawPhoneNumber = userData.user_phone_number || '';
-        const countryCode = userData.user_country_code || '91';
-        const firstName = userData.user_first_name || '';
-        const lastName = userData.user_last_name || '';
-        
-        console.log('Extracted:', {
-            rawPhone: rawPhoneNumber,
-            countryCode: countryCode,
-            name: `${firstName} ${lastName}`
+        const userData = await new Promise((resolve, reject) => {
+            https.get(urlWithSecret, (response) => {
+                let data = '';
+                
+                // Check response status
+                if (response.statusCode !== 200) {
+                    reject(new Error(`Phone.Email API returned status: ${response.statusCode}`));
+                    return;
+                }
+                
+                response.on('data', (chunk) => {
+                    data += chunk;
+                });
+                
+                response.on('end', () => {
+                    try {
+                        const jsonData = JSON.parse(data);
+                        console.log('Phone.Email raw response:', jsonData);
+                        resolve(jsonData);
+                    } catch (error) {
+                        console.error('JSON parse error:', error);
+                        reject(new Error('Invalid JSON response from Phone.Email'));
+                    }
+                });
+                
+            }).on('error', (error) => {
+                console.error('HTTPS request error:', error);
+                reject(error);
+            });
         });
         
-        // Process phone number
-        let phoneNumber = rawPhoneNumber.toString().replace(/\D/g, '');
+        console.log('Phone.Email user data:', userData);
         
-        // Remove country code if present
-        if (countryCode && phoneNumber.startsWith(countryCode)) {
-            phoneNumber = phoneNumber.substring(countryCode.length);
+        // Extract data
+        const user_country_code = userData.user_country_code || '91';
+        const user_phone_number = userData.user_phone_number || '';
+        const user_first_name = userData.user_first_name || '';
+        const user_last_name = userData.user_last_name || '';
+        
+        console.log('Extracted:', {
+            country_code: user_country_code,
+            phone: user_phone_number,
+            name: `${user_first_name} ${user_last_name}`
+        });
+        
+        // Process phone number for Indian format
+        let processedPhone = user_phone_number.toString().replace(/\D/g, '');
+        
+        // Remove country code if included
+        if (user_country_code && processedPhone.startsWith(user_country_code)) {
+            processedPhone = processedPhone.substring(user_country_code.length);
         }
         
-        // Ensure 10 digits for Indian numbers
-        if (phoneNumber.length > 10) {
-            phoneNumber = phoneNumber.slice(-10);
+        // Ensure 10 digits for Indian mobile
+        if (processedPhone.length > 10) {
+            processedPhone = processedPhone.slice(-10);
         }
         
-        console.log('Processed phone:', phoneNumber);
+        console.log('Processed phone:', processedPhone);
         
-        // Validate Indian mobile number (6,7,8,9 starting)
-        const isValidIndianNumber = /^[6-9]\d{9}$/.test(phoneNumber);
-        
-        if (!isValidIndianNumber && phoneNumber) {
-            console.warn('Phone number may not be valid Indian format:', phoneNumber);
-        }
-        
-        // Send response to frontend
+        // Send response
         res.json({
             success: true,
-            phone_number: phoneNumber,
-            country_code: countryCode,
-            first_name: firstName,
-            last_name: lastName,
-            full_name: `${firstName} ${lastName}`.trim(),
-            note: phoneNumber ? 'Phone number verified successfully' : 'No phone number found'
+            phone_number: processedPhone,
+            country_code: user_country_code,
+            first_name: user_first_name,
+            last_name: user_last_name,
+            full_name: `${user_first_name} ${user_last_name}`.trim(),
+            message: 'Phone verification successful',
+            debug: {
+                original_phone: user_phone_number,
+                processed_phone: processedPhone
+            }
         });
         
     } catch (error) {
         console.error('=== VERIFICATION ERROR ===');
         console.error('Error:', error.message);
         
-        // For testing/demo, return mock data
+        // For testing, return mock data
         res.json({
             success: true,
-            phone_number: '9876543210', // Mock number for testing
+            phone_number: '9891800888', // Mock number
             country_code: '91',
             first_name: 'Test',
             last_name: 'User',
-            full_name: 'Test User',
-            note: 'Using mock data. Please check CLIENT_SECRET configuration.',
+            note: 'Using mock data - ' + error.message,
             debug_error: error.message
         });
     }
@@ -148,52 +142,16 @@ app.post('/verify', async (req, res) => {
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'healthy',
-        server_time: new Date().toISOString(),
-        client_secret_configured: CLIENT_SECRET !== 'YOUR_CLIENT_SECRET_HERE'
+        timestamp: new Date().toISOString(),
+        client_id: '17998164863198198517'
     });
-});
-
-// Test endpoint with mock data
-app.get('/test-mock', (req, res) => {
-    res.json({
-        success: true,
-        phone_number: '9876543210',
-        country_code: '91',
-        first_name: 'John',
-        last_name: 'Doe',
-        message: 'This is mock test data'
-    });
-});
-
-// Test the actual Phone.Email call
-app.post('/test-real', async (req, res) => {
-    try {
-        const { test_url } = req.body;
-        const url = test_url || 'https://user.phone.email/user_test.json';
-        
-        console.log('Testing with URL:', url);
-        const data = await fetchPhoneEmailData(url);
-        
-        res.json({
-            success: true,
-            data: data,
-            message: 'Phone.Email API test successful'
-        });
-        
-    } catch (error) {
-        res.json({
-            success: false,
-            error: error.message,
-            message: 'Phone.Email API test failed'
-        });
-    }
 });
 
 // Start server
 app.listen(PORT, () => {
-    console.log(`🚀 Phone.Email Verification Server`);
+    console.log('🚀 Phone.Email Verification Server Started');
     console.log(`📡 Port: ${PORT}`);
     console.log(`🔑 Client ID: 17998164863198198517`);
-    console.log(`🔐 Client Secret: ${CLIENT_SECRET ? 'CONFIGURED' : 'NOT CONFIGURED'}`);
-    console.log(`🌐 Server URL: https://phone-email-proxy.onrender.com`);
+    console.log(`🔐 API Key Configured: ${CLIENT_SECRET === 'JcZm76wY9WGpFfh6y2r30y5YirJhFB5C' ? 'YES' : 'NO'}`);
+    console.log('🌐 Server URL: https://phone-email-proxy.onrender.com');
 });
