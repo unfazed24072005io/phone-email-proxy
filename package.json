@@ -1,18 +1,12 @@
 {
   "name": "phone-email-backend",
   "version": "1.0.0",
-  "description": "Backend server for Phone.Email verification",
   "main": "phone-email-server.js",
   "scripts": {
-    "start": "node phone-email-server.js",
-    "dev": "nodemon phone-email-server.js"
+    "start": "node phone-email-server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "axios": "^1.6.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "cors": "^2.8.5"
   }
 }
